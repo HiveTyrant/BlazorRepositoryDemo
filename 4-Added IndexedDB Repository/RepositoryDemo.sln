@@ -3,9 +3,9 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.9.34728.123
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "RepositoryDemo", "RepositoryDemo\RepositoryDemo\RepositoryDemo.csproj", "{258B1F79-F9DB-49AC-98B9-BEBC6201BBE3}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepositoryDemo", "RepositoryDemo\RepositoryDemo\RepositoryDemo.csproj", "{258B1F79-F9DB-49AC-98B9-BEBC6201BBE3}"
 EndProject
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "RepositoryDemo.Client", "RepositoryDemo\RepositoryDemo.Client\RepositoryDemo.Client.csproj", "{027BA073-1E9F-4F1E-9CE6-2A4169F36966}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepositoryDemo.Client", "RepositoryDemo\RepositoryDemo.Client\RepositoryDemo.Client.csproj", "{027BA073-1E9F-4F1E-9CE6-2A4169F36966}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

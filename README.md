@@ -2,7 +2,7 @@
 
 ## Overview
 
-In this module, we will create a hosted Blazor WebAssembly application with an API layer that uses the **repository pattern** to access two different data layers using a common interface, `IRepository`, which we will define. 
+In this module, we will create a Blazor WebAssembly application with an API layer that uses the **repository pattern** to access two different data layers using a common interface, `IRepository`, which we will define. 
 
 We will use `IRepository` on the server to access data, and also on the client to define a generic API Repository, which wraps calls to the API with an `HttpClient` object.
 
@@ -19,31 +19,35 @@ This demo goes way beyond using the repository pattern. This is what we will acc
 - Implement a version of the IndexedDB Repository that syncs data using an API Repository when online
 - Implement real-time data updates using a message broker (SignalR) to keep data in sync while the app is in use.
 
-#### Create a Blazor WebAssembly App
+#### Create a Global WebAssembly Blazor Web App
 
-Create a *hosted* Blazor WebAssembly application called *RepositoryDemo*. This will create three projects: *RepositoryDemo.Client*, *RepositoryDemo.Server*, and *RepositoryDemo.Shared*.
+Create a Blazor Web App called **RepositoryDemo**. This will create two projects: **RepositoryDemo** (server) and **RepositoryDemo.Client** (client).
+
+Make sure you select the following options:
+
+![image-20240423085451476](images/image-20240423085451476.png)
 
 #### Install NewtonSoft.Json
 
 Right-click on the Solution file, and select **Manage NuGet Packages for Solution...**
 
-Browse for "Newtonsoft.Json" and install in both the Client and Server projects:
+Browse for "Newtonsoft.Json" and install in both the Client and Server projects.
 
-![image-20220322171923311](images/image-20220322171923311.png)
+#### Install AvnRepository
 
-### Install AvnRepository
-
-Get the NuGet package at [https://www.nuget.org/packages/AvnRepository/](https://www.nuget.org/packages/AvnRepository/) and install it in both the Client and Server projects.
+Browse for "AvnRepository" and install in both the Client and Server projects.
 
 `AvnRepository` contains all the plumbing code for building repositories.
 
 #### Add Models
 
-To the *Shared* app, add a *Models* folder and add the following files to it:
+To the *Client* app, add a *Models* folder and add the following files to it:
 
 *Customer.cs*
 
 ```c#
+namespace RepositoryDemo.Client.Models;
+
 public class Customer
 {
     public int Id { get; set; }
@@ -506,7 +510,7 @@ public enum FilterOperator
 
 #### Add Global Usings to Server
 
-In the server project, add the following statements to the very top of *Program.cs*:
+In the **RepositoryDemo** project, add the following statements to the very top of *Program.cs*:
 
 ```c#
 global using System.Linq.Expressions;
@@ -658,7 +662,7 @@ We're using a bit of Reflection to access the primary key property and get its v
 
 #### Add MemoryRepository as a service
 
-Add the following to the server project's *Program.cs* file, after the line `builder.Services.AddRazorPages();`
+Add the following to the server project's *Program.cs* file, just before the line `var app = builder.Build();`
 
 ```c#
 builder.Services.AddSingleton<MemoryRepository<Customer>>(x =>
@@ -673,192 +677,193 @@ In the above code we're configuring this manager telling it that the primary key
 
 #### Add an API Controller
 
-To the server project's *Controllers* folder, add the following:
+To the server project, add a *Controllers* folder, add the following:
 
 *InMemoryCustomersController.cs*
 
 ```c#
 using Microsoft.AspNetCore.Mvc;
-namespace RepositoryDemo.Server.Controllers
+using RepositoryDemo.Data;
+
+namespace RepositoryDemo.Controllers;
+
+[Route("[controller]")]
+[ApiController]
+public class InMemoryCustomersController : ControllerBase
 {
-    [Route("[controller]")]
-    [ApiController]
-    public class InMemoryCustomersController : ControllerBase
+    MemoryRepository<Customer> customersManager;
+
+    public InMemoryCustomersController(MemoryRepository<Customer> _customersManager)
     {
-        MemoryRepository<Customer> customersManager;
+        customersManager = _customersManager;
+    }
 
-        public InMemoryCustomersController(MemoryRepository<Customer> _customersManager)
+    [HttpGet]
+    public async Task<ActionResult<APIListOfEntityResponse<Customer>>> Get()
+    {
+        try
         {
-            customersManager = _customersManager;
-        }
-
-        [HttpGet]
-        public async Task<ActionResult<APIListOfEntityResponse<Customer>>> Get()
-        {
-            try
+            var result = await customersManager.GetAllAsync();
+            return Ok(new APIListOfEntityResponse<Customer>()
             {
-                var result = await customersManager.GetAllAsync();
-                return Ok(new APIListOfEntityResponse<Customer>()
+                Success = true,
+                Data = result
+            });
+        }
+        catch (Exception ex)
+        {
+            // log exception here
+            return StatusCode(500);
+        }
+    }
+
+    [HttpPost("getwithfilter")]
+    public async Task<ActionResult<APIListOfEntityResponse<Customer>>>
+        GetWithFilter([FromBody] QueryFilter<Customer> Filter)
+    {
+        try
+        {
+            var result = await customersManager.GetAsync(Filter);
+            return Ok(new APIListOfEntityResponse<Customer>()
+            {
+                Success = true,
+                Data = result
+            });
+        }
+        catch (Exception ex)
+        {
+            // log exception here
+            var msg = ex.Message;
+            return StatusCode(500);
+        }
+    }
+
+    [HttpGet("{Id}")]
+    public async Task<ActionResult<APIEntityResponse<Customer>>> GetById(int Id)
+    {
+        try
+        {
+            var result = await customersManager.GetByIdAsync(Id);
+            if (result != null)
+            {
+                return Ok(new APIEntityResponse<Customer>()
                 {
                     Success = true,
                     Data = result
                 });
             }
-            catch (Exception ex)
+            else
             {
-                // log exception here
-                return StatusCode(500);
+                return Ok(new APIEntityResponse<Customer>()
+                {
+                    Success = false,
+                    ErrorMessages = new List<string>() { "Customer Not Found" },
+                    Data = null
+                });
             }
         }
-
-        [HttpPost("getwithfilter")]
-        public async Task<ActionResult<APIListOfEntityResponse<Customer>>>
-            GetWithFilter([FromBody] QueryFilter<Customer> Filter)
+        catch (Exception ex)
         {
-            try
+            // log exception here
+            return StatusCode(500);
+        }
+    }
+
+    [HttpPost]
+    public async Task<ActionResult<APIEntityResponse<Customer>>>
+     Insert([FromBody] Customer Customer)
+    {
+        try
+        {
+            var result = await customersManager.InsertAsync(Customer);
+            if (result != null)
             {
-                var result = await customersManager.GetAsync(Filter);
-                return Ok(new APIListOfEntityResponse<Customer>()
+                return Ok(new APIEntityResponse<Customer>()
                 {
                     Success = true,
                     Data = result
                 });
             }
-            catch (Exception ex)
+            else
             {
-                // log exception here
-                var msg = ex.Message;
-                return StatusCode(500);
-            }
-        }
-
-        [HttpGet("{Id}")]
-        public async Task<ActionResult<APIEntityResponse<Customer>>> GetById(int Id)
-        {
-            try
-            {
-                var result = await customersManager.GetByIdAsync(Id);
-                if (result != null)
+                return Ok(new APIEntityResponse<Customer>()
                 {
-                    return Ok(new APIEntityResponse<Customer>()
-                    {
-                        Success = true,
-                        Data = result
-                    });
-                }
-                else
-                {
-                    return Ok(new APIEntityResponse<Customer>()
-                    {
-                        Success = false,
-                        ErrorMessages = new List<string>() { "Customer Not Found" },
-                        Data = null
-                    });
-                }
-            }
-            catch (Exception ex)
-            {
-                // log exception here
-                return StatusCode(500);
-            }
-        }
-
-        [HttpPost]
-        public async Task<ActionResult<APIEntityResponse<Customer>>>
-         Insert([FromBody] Customer Customer)
-        {
-            try
-            {
-                var result = await customersManager.InsertAsync(Customer);
-                if (result != null)
-                {
-                    return Ok(new APIEntityResponse<Customer>()
-                    {
-                        Success = true,
-                        Data = result
-                    });
-                }
-                else
-                {
-                    return Ok(new APIEntityResponse<Customer>()
-                    {
-                        Success = false,
-                        ErrorMessages = new List<string>()
+                    Success = false,
+                    ErrorMessages = new List<string>()
                { "Could not find customer after adding it." },
-                        Data = null
-                    });
-                }
-            }
-            catch (Exception ex)
-            {
-                // log exception here
-                return StatusCode(500);
+                    Data = null
+                });
             }
         }
-
-
-        [HttpPut]
-        public async Task<ActionResult<APIEntityResponse<Customer>>>
-            Update([FromBody] Customer Customer)
+        catch (Exception ex)
         {
-            try
+            // log exception here
+            return StatusCode(500);
+        }
+    }
+
+
+    [HttpPut]
+    public async Task<ActionResult<APIEntityResponse<Customer>>>
+        Update([FromBody] Customer Customer)
+    {
+        try
+        {
+            var result = await customersManager.UpdateAsync(Customer);
+            if (result != null)
             {
-                var result = await customersManager.UpdateAsync(Customer);
-                if (result != null)
+                return Ok(new APIEntityResponse<Customer>()
                 {
-                    return Ok(new APIEntityResponse<Customer>()
-                    {
-                        Success = true,
-                        Data = result
-                    });
-                }
-                else
+                    Success = true,
+                    Data = result
+                });
+            }
+            else
+            {
+                return Ok(new APIEntityResponse<Customer>()
                 {
-                    return Ok(new APIEntityResponse<Customer>()
-                    {
-                        Success = false,
-                        ErrorMessages = new List<string>()
+                    Success = false,
+                    ErrorMessages = new List<string>()
                { "Could not find customer after updating it." },
-                        Data = null
-                    });
-                }
-            }
-            catch (Exception ex)
-            {
-                // log exception here
-                return StatusCode(500);
+                    Data = null
+                });
             }
         }
-
-        [HttpDelete("{Id}")]
-        public async Task<ActionResult<bool>> Delete(int Id)
+        catch (Exception ex)
         {
-            try
-            {
-                return await customersManager.DeleteByIdAsync(Id);
-            }
-            catch (Exception ex)
-            {
-                // log exception here
-                var msg = ex.Message;
-                return StatusCode(500);
-            }
+            // log exception here
+            return StatusCode(500);
         }
+    }
 
-
-        [HttpGet("deleteall")]
-        public async Task<ActionResult> DeleteAll()
+    [HttpDelete("{Id}")]
+    public async Task<ActionResult<bool>> Delete(int Id)
+    {
+        try
         {
-            try
-            {
-                await customersManager.DeleteAllAsync();
-                return NoContent();
-            }
-            catch (Exception ex)
-            {
-                // log exception here
-                return StatusCode(500);
-            }
+            return await customersManager.DeleteByIdAsync(Id);
+        }
+        catch (Exception ex)
+        {
+            // log exception here
+            var msg = ex.Message;
+            return StatusCode(500);
+        }
+    }
+
+
+    [HttpGet("deleteall")]
+    public async Task<ActionResult> DeleteAll()
+    {
+        try
+        {
+            await customersManager.DeleteAllAsync();
+            return NoContent();
+        }
+        catch (Exception ex)
+        {
+            // log exception here
+            return StatusCode(500);
         }
     }
 }
@@ -874,6 +879,26 @@ The `Get()` method has the most complex return type:
 Task<ActionResult<APIListOfEntityResponse<Customer>>>
 ```
 
+#### Configure the server to use API Controllers
+
+In the Server project's *Program.cs*, add the following before the line `var app = builder.Build();`:
+
+```c#
+builder.Services.AddControllers();
+```
+
+Then add the following after the line `var app = builder.Build();`:
+
+```c#
+app.MapControllers();
+```
+
+Also, let's add this to the top of *Program.cs*:
+
+```c#
+global using RepositoryDemo.Client.Models;
+```
+
 #### Add Global Usings to the Client 
 
 Add the following statements to the very top of the Client project's *Program.cs*
@@ -884,6 +909,7 @@ global using Newtonsoft.Json;
 global using System.Net;
 global using System.Linq.Expressions;
 global using AvnRepository;
+global using RepositoryDemo.Client.Models;
 ```
 
 #### Add an APIRepository class to the Client
@@ -893,7 +919,8 @@ To the client app, add a *Services* folder and add the following:
 *APIRepository.cs*
 
 ```c#
-using System.Linq.Expressions;
+namespace RepositoryDemo.Client.Services;
+
 /// <summary>
 /// Reusable API Repository base class that provides access to CRUD APIs
 /// </summary>
@@ -1097,10 +1124,12 @@ To the client project's *Services* folder, add the following:
 *CustomerRepository.cs*
 
 ```c#
+namespace RepositoryDemo.Client.Services;
+
 public class CustomerRepository : APIRepository<Customer>
 {
     HttpClient http;
-    
+
     static string controllerName = "inmemorycustomers";
 
     public CustomerRepository(HttpClient _http)
@@ -1123,9 +1152,11 @@ To the client project's *Program.cs* file, add the following:
 builder.Services.AddScoped<CustomerRepository>();
 ```
 
-#### Add using statement to *_Imports.razor*
+#### Add using statements to *_Imports.razor*
 
 ```c#
+@using RepositoryDemo.Client.Models
+@using RepositoryDemo.Client.Services
 @using AvnRepository
 ```
 
@@ -1133,7 +1164,7 @@ Adding these ensures we can access classes in these namespaces from .razor compo
 
 #### Implement the Blazor code and markup
 
-Change *\Pages\Index.razor* to the following:
+Change *Home.razor* to the following:
 
 ```c#
 @page "/"
@@ -1356,7 +1387,36 @@ Change *\Pages\Index.razor* to the following:
 
 This page exercises all features of `IRepository<TEntity>`: `GetAll`, `Get ` with a query filter,`GetById`, `Insert`, `Update`, and `Delete` two ways: by Id and by Entity.
 
-![image-20220410180251563](images/image-20220410180251563.png)
+There's one more thing we should do to keep this demo as simple as possible, and that is to turn off pre-rendering so we don't have to duplicate our services and code on the server.
+
+Replace *App.razor* with the following:
+
+```xml
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <base href="/" />
+    <link rel="stylesheet" href="bootstrap/bootstrap.min.css" />
+    <link rel="stylesheet" href="app.css" />
+    <link rel="stylesheet" href="RepositoryDemo.styles.css" />
+    <link rel="icon" type="image/png" href="favicon.png" />
+    <HeadOutlet @rendermode="new InteractiveWebAssemblyRenderMode(false)" />
+</head>
+
+<body>
+    <Routes @rendermode="new InteractiveWebAssemblyRenderMode(false)" />
+    <script src="_framework/blazor.web.js"></script>
+</body>
+
+</html>
+```
+
+Now run the app:
+
+![image-20240423093155261](images/image-20240423093155261.png)
 
 The app displays four customers, their Ids, names, and email addresses.
 
@@ -1381,6 +1441,8 @@ If you press ![image-20210514131416003](images/image-20210514131416003.png)or re
 Try out the search functionality. 
 
 ![image-20220410180617860](images/image-20220410180617860.png)
+
+The finished code for this leg of the demo can be found in the *1-In Memory Only* folder
 
 ## Implement an Entity Framework Repository
 
@@ -1411,33 +1473,30 @@ Press the green **Play** button to execute the statement
 
 ![image-20220323175142470](images/image-20220323175142470.png)
 
-Double-click on the **RepositoryDemo.Server** project in the Solution Explorer to expose the *.csproj* file, and add the following packages:
+Double-click on the **RepositoryDemo** project in the Solution Explorer to expose the *.csproj* file, and add the latest versions of the following packages:
 
 ```xml
-<PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="6.0.4" />
-<PackageReference Include="Microsoft.EntityFrameworkCore.Tools" Version="6.0.4">
+<PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="8.0.4" />
+<PackageReference Include="Microsoft.EntityFrameworkCore.Tools" Version="8.0.4">
     <PrivateAssets>all</PrivateAssets>
     <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
 </PackageReference>
-<PackageReference Include="Microsoft.VisualStudio.Web.CodeGeneration.Design" Version="6.0.3" />
-
+<PackageReference Include="Microsoft.VisualStudio.Web.CodeGeneration.Design" Version="8.0.2" />
 ```
 
 #### Scaffold an EF DbContext from the database
 
-Open the **Package Manager Console** window, select the **RepositoryDemo.Server** project, and enter the following command:
+Open the **Package Manager Console** window, select the **RepositoryDemo** project, and enter the following command:
 
 ```
 Scaffold-DbContext "Server=(localdb)\mssqllocaldb;Database=RepositoryDemo;Trusted_Connection=True;" Microsoft.EntityFrameworkCore.SqlServer -OutputDir Data
 ```
 
-![image-20220323184417914](images/image-20220323184417914.png)
+![image-20240423094028562](images/image-20240423094028562.png)
 
+> **IMPORTANT**: Delete the *Customer.cs* file from the Server's *Data* folder. The app won't work if you don't delete it.  We already have a Customer.cs in the client project.
 
-
-> **IMPORTANT**: Delete the *Customer.cs* file from the Server's *Data* folder. The app won't work if you don't delete it. 
-
-![image-20220323200204764](images/image-20220323200204764.png)
+<img src="images/image-20240423094115654.png" alt="image-20240423094115654" style="zoom:80%;" />
 
 #### Create the EF Repository
 
@@ -1450,6 +1509,8 @@ global using Microsoft.EntityFrameworkCore;
 To the *Data* folder, add a new class called *EFRepository.cs* :
 
 ```c#
+namespace RepositoryDemo.Data;
+
 public class EFRepository<TEntity, TDataContext> : IRepository<TEntity>
   where TEntity : class
   where TDataContext : DbContext
@@ -1524,186 +1585,185 @@ To the *Controllers* folder, add *EFCustomersController.cs* :
 
 ```c#
 using Microsoft.AspNetCore.Mvc;
-using RepositoryDemo.Server.Data;
-namespace RepositoryDemo.Server.Controllers
+
+namespace RepositoryDemo.Data;
+
+[Route("[controller]")]
+[ApiController]
+public class EFCustomersController : ControllerBase
 {
-    [Route("[controller]")]
-    [ApiController]
-    public class EFCustomersController : ControllerBase
+    EFRepository<Customer, RepositoryDemoContext> customersManager;
+
+    public EFCustomersController(EFRepository<Customer, RepositoryDemoContext> _customersManager)
     {
-        EFRepository<Customer, RepositoryDemoContext> customersManager;
+        customersManager = _customersManager;
+    }
 
-        public EFCustomersController(EFRepository<Customer, RepositoryDemoContext> _customersManager)
+    [HttpGet]
+    public async Task<ActionResult<APIListOfEntityResponse<Customer>>> Get()
+    {
+        try
         {
-            customersManager = _customersManager;
-        }
-
-        [HttpGet]
-        public async Task<ActionResult<APIListOfEntityResponse<Customer>>> Get()
-        {
-            try
+            var result = await customersManager.GetAllAsync();
+            return Ok(new APIListOfEntityResponse<Customer>()
             {
-                var result = await customersManager.GetAllAsync();
-                return Ok(new APIListOfEntityResponse<Customer>()
+                Success = true,
+                Data = result
+            });
+        }
+        catch (Exception ex)
+        {
+            // log exception here
+            return StatusCode(500);
+        }
+    }
+
+    [HttpPost("getwithfilter")]
+    public async Task<ActionResult<APIListOfEntityResponse<Customer>>>
+        GetWithFilter([FromBody] QueryFilter<Customer> Filter)
+    {
+        try
+        {
+            var result = await customersManager.GetAsync(Filter);
+            return Ok(new APIListOfEntityResponse<Customer>()
+            {
+                Success = true,
+                Data = result.ToList()
+            });
+        }
+        catch (Exception ex)
+        {
+            // log exception here
+            var msg = ex.Message;
+            return StatusCode(500);
+        }
+    }
+
+    [HttpGet("{Id}")]
+    public async Task<ActionResult<APIEntityResponse<Customer>>> GetById(int Id)
+    {
+        try
+        {
+            var result = await customersManager.GetByIdAsync(Id);
+            if (result != null)
+            {
+                return Ok(new APIEntityResponse<Customer>()
                 {
                     Success = true,
                     Data = result
                 });
             }
-            catch (Exception ex)
+            else
             {
-                // log exception here
-                return StatusCode(500);
-            }
-        }
-
-        [HttpPost("getwithfilter")]
-        public async Task<ActionResult<APIListOfEntityResponse<Customer>>> 
-            GetWithFilter([FromBody] QueryFilter<Customer> Filter)
-        {
-            try
-            {
-                var result = await customersManager.GetAsync(Filter);
-                return Ok(new APIListOfEntityResponse<Customer>()
+                return Ok(new APIEntityResponse<Customer>()
                 {
-                    Success = true,
-                    Data = result.ToList()
+                    Success = false,
+                    ErrorMessages = new List<string>() { "Customer Not Found" },
+                    Data = null
                 });
             }
-            catch (Exception ex)
-            {
-                // log exception here
-                var msg = ex.Message;
-                return StatusCode(500);
-            }
         }
-
-        [HttpGet("{Id}")]
-        public async Task<ActionResult<APIEntityResponse<Customer>>> GetById(int Id)
+        catch (Exception ex)
         {
-            try
-            {
-                var result = await customersManager.GetByIdAsync(Id);
-                if (result != null)
-                {
-                    return Ok(new APIEntityResponse<Customer>()
-                    {
-                        Success = true,
-                        Data = result
-                    });
-                }
-                else
-                {
-                    return Ok(new APIEntityResponse<Customer>()
-                    {
-                        Success = false,
-                        ErrorMessages = new List<string>() { "Customer Not Found" },
-                        Data = null
-                    });
-                }
-            }
-            catch (Exception ex)
-            {
-                // log exception here
-                return StatusCode(500);
-            }
+            // log exception here
+            return StatusCode(500);
         }
+    }
 
-        [HttpPost]
-        public async Task<ActionResult<APIEntityResponse<Customer>>>
-         Insert([FromBody] Customer Customer)
+    [HttpPost]
+    public async Task<ActionResult<APIEntityResponse<Customer>>>
+     Insert([FromBody] Customer Customer)
+    {
+        try
         {
-            try
+            Customer.Id = 0; // Make sure you do this!
+            var result = await customersManager.InsertAsync(Customer);
+            if (result != null)
             {
-                Customer.Id = 0; // Make sure you do this!
-                var result = await customersManager.InsertAsync(Customer);
-                if (result != null)
+                return Ok(new APIEntityResponse<Customer>()
                 {
-                    return Ok(new APIEntityResponse<Customer>()
-                    {
-                        Success = true,
-                        Data = result
-                    });
-                }
-                else
+                    Success = true,
+                    Data = result
+                });
+            }
+            else
+            {
+                return Ok(new APIEntityResponse<Customer>()
                 {
-                    return Ok(new APIEntityResponse<Customer>()
-                    {
-                        Success = false,
-                        ErrorMessages = new List<string>()
+                    Success = false,
+                    ErrorMessages = new List<string>()
                { "Could not find customer after adding it." },
-                        Data = null
-                    });
-                }
-            }
-            catch (Exception ex)
-            {
-                // log exception here
-                return StatusCode(500);
+                    Data = null
+                });
             }
         }
-
-        [HttpPut]
-        public async Task<ActionResult<APIEntityResponse<Customer>>>
-         Update([FromBody] Customer Customer)
+        catch (Exception ex)
         {
-            try
+            // log exception here
+            return StatusCode(500);
+        }
+    }
+
+    [HttpPut]
+    public async Task<ActionResult<APIEntityResponse<Customer>>>
+     Update([FromBody] Customer Customer)
+    {
+        try
+        {
+            var result = await customersManager.UpdateAsync(Customer);
+            if (result != null)
             {
-                var result = await customersManager.UpdateAsync(Customer);
-                if (result != null)
+                return Ok(new APIEntityResponse<Customer>()
                 {
-                    return Ok(new APIEntityResponse<Customer>()
-                    {
-                        Success = true,
-                        Data = result
-                    });
-                }
-                else
+                    Success = true,
+                    Data = result
+                });
+            }
+            else
+            {
+                return Ok(new APIEntityResponse<Customer>()
                 {
-                    return Ok(new APIEntityResponse<Customer>()
-                    {
-                        Success = false,
-                        ErrorMessages = new List<string>()
+                    Success = false,
+                    ErrorMessages = new List<string>()
                { "Could not find customer after updating it." },
-                        Data = null
-                    });
-                }
-            }
-            catch (Exception ex)
-            {
-                // log exception here
-                return StatusCode(500);
+                    Data = null
+                });
             }
         }
-
-        [HttpDelete("{Id}")]
-        public async Task<ActionResult<bool>> Delete(int Id)
+        catch (Exception ex)
         {
-            try
-            {
-                return await customersManager.DeleteByIdAsync(Id);
-            }
-            catch (Exception ex)
-            {
-                // log exception here
-                var msg = ex.Message;
-                return StatusCode(500);
-            }
+            // log exception here
+            return StatusCode(500);
         }
+    }
 
-        [HttpGet("deleteall")]
-        public async Task<ActionResult> DeleteAll()
+    [HttpDelete("{Id}")]
+    public async Task<ActionResult<bool>> Delete(int Id)
+    {
+        try
         {
-            try
-            {
-                await customersManager.DeleteAllAsync();
-                return NoContent();
-            }
-            catch (Exception ex)
-            {
-                // log exception here
-                return StatusCode(500);
-            }
+            return await customersManager.DeleteByIdAsync(Id);
+        }
+        catch (Exception ex)
+        {
+            // log exception here
+            var msg = ex.Message;
+            return StatusCode(500);
+        }
+    }
+
+    [HttpGet("deleteall")]
+    public async Task<ActionResult> DeleteAll()
+    {
+        try
+        {
+            await customersManager.DeleteAllAsync();
+            return NoContent();
+        }
+        catch (Exception ex)
+        {
+            // log exception here
+            return StatusCode(500);
         }
     }
 }
@@ -1718,23 +1778,20 @@ builder.Services.AddTransient<RepositoryDemoContext, RepositoryDemoContext>();
 builder.Services.AddTransient<EFRepository<Customer, RepositoryDemoContext>>();
 ```
 
-You'll need this:
-
-```c#
-using RepositoryDemo.Server.Data;
-```
-
-The `RepositoryDemoContext` and `EFRepository` need to be defined as transient services, because the controller is transient also. 
+> The `RepositoryDemoContext` and `EFRepository` need to be defined as transient services, because the controller is transient also. Transient means the services are created on demand and do not persist. However, they can be configured with the DI system.
+>
 
 #### Modify the Client ever so slightly
 
 Change *\Services\CustomerRepository.cs* to point to the EF Controller:
 
 ```c#
+namespace RepositoryDemo.Client.Services;
+
 public class CustomerRepository : APIRepository<Customer>
 {
     HttpClient http;
-    
+
     // swap out the controller name
     //static string controllerName = "inmemorycustomers";
     static string controllerName = "efcustomers";
@@ -1751,11 +1808,13 @@ public class CustomerRepository : APIRepository<Customer>
 
 Give it a little time to bring the database up and generate the initial records. It will look exactly the same as when we were using the In Memory repository:
 
-![image-20220410180251563](images/image-20220410180251563.png)
+![image-20240423095032139](images/image-20240423095032139.png)
 
 After running the app, take a look at the database by right-clicking on the **Customer** table in the **SQL Server Object Explorer** and selecting **View Data**:
 
 ![image-20220323191200976](images/image-20220323191200976.png)
+
+The finished code for this leg of the demo can be found in the *2-Added EF Repository* folder
 
 ### Add a Dapper Repository
 
@@ -1776,12 +1835,12 @@ Update the *appsettings.json* file in the Server project to add the **Repository
 }
 ```
 
-Add the following packages to the Server project's *.csproj* file:
+Add the latest versions of the following packages to the Server project's *.csproj* file:
 
 ```xml
-<PackageReference Include="Dapper" Version="2.0.123" />
+<PackageReference Include="Dapper" Version="2.1.35" />
 <PackageReference Include="Dapper.Contrib" Version="2.0.78" />
-<PackageReference Include="System.Data.SqlClient" Version="4.8.3" />
+<PackageReference Include="System.Data.SqlClient" Version="4.8.6" />
 ```
 
 Add the following global using statements to the top of the Server project's *Program.cs* file:
@@ -1793,20 +1852,20 @@ global using Dapper.Contrib.Extensions;
 global using System.Data;
 ```
 
-To the Shared project's *.csproj* file, add the following:
+To the Client project's *.csproj* file, add the following:
 
 ```xml
-<ItemGroup>
-    <PackageReference Include="Dapper.Contrib" Version="2.0.78" />
-</ItemGroup>
+<PackageReference Include="Dapper.Contrib" Version="2.0.78" />
 ```
 
 We need this because `Dapper.Contrib` requires that we add a few attributes.
 
-In the Shared project, change *Customer.cs* to the following:
+In the Client project, change *Customer.cs* to the following:
 
 ```c#
-using Dapper.Contrib.Extensions;
+using System.ComponentModel.DataAnnotations.Schema;
+using System.ComponentModel.DataAnnotations;
+namespace RepositoryDemo.Client.Models;
 
 [Table("Customer")]
 public class Customer
@@ -1827,6 +1886,7 @@ If the primary key needed to be supplied by the calling code, we could use the `
 To the *Data* folder, add *DapperSqlHelper.cs*:
 
 ```c#
+namespace RepositoryDemo.Data;
 public class DapperSqlHelper
 {
     public static string GetDapperInsertStatement(object Entity, string TableName)
@@ -1895,6 +1955,7 @@ This helper method let's you create a custom parameterized SQL INSERT string bas
 To the *Data* folder, add *DapperRepository.cs*:
 
 ```c#
+namespace RepositoryDemo.Data;
 public class DapperRepository<TEntity> : IRepository<TEntity> where TEntity : class
 {
     private string _sqlConnectionString;
@@ -2371,10 +2432,12 @@ namespace RepositoryDemo.Server.Controllers
 On the client, just tweak the *CustomerRepository.cs* file to call the Dapper controller:
 
 ```c#
+namespace RepositoryDemo.Client.Services;
+
 public class CustomerRepository : APIRepository<Customer>
 {
     HttpClient http;
-    
+
     // swap out the controller name
     //static string controllerName = "inmemorycustomers";
     //static string controllerName = "efcustomers";
@@ -2392,9 +2455,7 @@ Run the app.
 
 It will look the same, but when you search, unlike the other repositories, the DapperRepository will create a custom SQL statement based on the parameters in the `QueryFilter`
 
-The solution up to this point can be found in the *BlazorRepositoryDemo-BeforeIndexedDB* folder.
-
-
+The finished code for this leg of the demo can be found in the *3-Added Dapper Repository* folder
 
 ### Add a Client-Side Repository based on IndexedDB
 
@@ -2426,13 +2487,13 @@ BlazorDB is "an easy, fast way to use IndexedDB in a Blazor application." and is
 
 First, install the NuGet Package `BlazorIndexedDB` in the client app.
 
-You can alternatively add this package declaration to the *RepositoryDemo.Client* project's *.csproj* file:
+You can alternatively add the latest version of this package declaration to the *RepositoryDemo.Client* project's *.csproj* file:
 
 ```xml
 <PackageReference Include="BlazorIndexedDB" Version="0.3.1" />
 ```
 
-Next, add the following `<script>` tags to the *RepositoryDemo.Client* project's */wwwroot/index.html* file:
+Next, add the following `<script>` tags to the *App.razor* file:
 
 ```html
 <script src="_content/BlazorIndexedDB/dexie.min.js"></script>
@@ -2457,6 +2518,7 @@ Add *IndexedDBRepository.cs* to the *RepositoryDemo.Client* project's *Services*
 
 ```c#
 using System.Reflection;
+namespace RepositoryDemo.Client.Services;
 
 public class IndexedDBRepository<TEntity> : IRepository<TEntity> where TEntity : class
 {
@@ -2471,7 +2533,7 @@ public class IndexedDBRepository<TEntity> : IRepository<TEntity> where TEntity :
     Type entityType;
     PropertyInfo primaryKey;
 
-    public IndexedDBRepository(string dbName, string primaryKeyName, 
+    public IndexedDBRepository(string dbName, string primaryKeyName,
           bool autoGenerateKey, IBlazorDbFactory dbFactory)
     {
         _dbName = dbName;
@@ -2604,7 +2666,7 @@ public class IndexedDBRepository<TEntity> : IRepository<TEntity> where TEntity :
 
 First of all, unlike the DapperRepository, the IndexedDBRepository requires us to use the `QueryFilter`'s `GetFiltererdList` method, which requires you to pass a list of all the items. 
 
-This is because IndexedDB and therefore BlazorDB do not have a way to pass a customer SQL query for selecting records.
+This is because IndexedDB and therefore BlazorDB do not have a way to pass a custom SQL query for selecting records. 
 
 ```c#
 public async Task<IEnumerable<TEntity>> GetAsync(QueryFilter<TEntity> Filter)
@@ -2656,6 +2718,8 @@ The `IndexedDbManager` (and IndexedDB) have two ways to insert a record: Add and
 Add *CustomerIndexedDBRepository.cs* to the *RepositoryDemo.Client* project's *Services* folder:
 
 ```c#
+namespace RepositoryDemo.Client.Services;
+
 public class CustomerIndexedDBRepository : IndexedDBRepository<Customer>
 {
     public CustomerIndexedDBRepository(IBlazorDbFactory dbFactory)
@@ -2692,7 +2756,7 @@ builder.Services.AddBlazorDB(options =>
 builder.Services.AddScoped<CustomerIndexedDBRepository>();
 ```
 
-Change line 2 of the *RepositoryDemo.Client* project's */Pages/Index.* file
+Change line 2 of the *RepositoryDemo.Client* project's *Home.razor* file
 
 ```c#
 @inject CustomerIndexedDBRepository CustomerManager
@@ -2702,7 +2766,7 @@ Run the app!
 
 Try using the browser tools to simulate being offline. Note that the app still works.
 
-The solution up to this point can be found in the *BlazorRepositoryDemo-BeforeIndexedDBSync* folder.
+The finished code for this leg of the demo can be found in the *4-Added IndexedDB Repository* folder
 
 ## Synchronize Data to a Server
 
@@ -2718,7 +2782,7 @@ Our demo app just does it without fanfare because the Customers table is so smal
 
 Let's first add an Online/Offline indicator in the UI. The idea is to use JavaScript Interop to take advantage of `navigator.onLine`, and conversely have the `JavaScript` code notify the Blazor app of any changes by subscribing to online and offline events.
 
-Add a Razor component, under the *Shared* folder, and call it *ConnectivityIndicator.razor*.
+Add a Razor component to the *Client* project, and call it *ConnectivityIndicator.razor*.
 
 Add the following code:
 
@@ -2768,9 +2832,7 @@ else
 }
 ```
 
-> ☝️ Notice the use of the `IJSRuntime` to invoke functions in `JavaScript`. We'll get to that.
-
-Let's create a *js* folder under *wwwroot*, and add a new JavaScript file called *connectivity.js*, with the following code:
+In the server project, create a *js* folder under *wwwroot*, and add a new JavaScript file called *connectivity.js*, with the following code:
 
 ```javascript
 let notify;
@@ -2798,13 +2860,13 @@ window.connectivity = {
 };
 ```
 
-Open *wwwroot/index.html* and add a reference to *connectivity.js* below the `BlazorDB.js` reference we added earlier.
+Open *App.razor* and add a reference to *connectivity.js* below the `BlazorDB.js` reference we added earlier.
 
 ```
 <script src="js/connectivity.js"></script>
 ```
 
-The complete file should look like this:
+The complete *App.razor* file should look like this:
 
 ```html
 <!DOCTYPE html>
@@ -2812,23 +2874,18 @@ The complete file should look like this:
 
 <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <title>RepositoryDemo</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <base href="/" />
-    <link href="css/bootstrap/bootstrap.min.css" rel="stylesheet" />
-    <link href="css/app.css" rel="stylesheet" />
-    <link href="RepositoryDemo.Client.styles.css" rel="stylesheet" />
+    <link rel="stylesheet" href="bootstrap/bootstrap.min.css" />
+    <link rel="stylesheet" href="app.css" />
+    <link rel="stylesheet" href="RepositoryDemo.styles.css" />
+    <link rel="icon" type="image/png" href="favicon.png" />
+    <HeadOutlet @rendermode="new InteractiveWebAssemblyRenderMode(false)" />
 </head>
 
 <body>
-    <div id="app">Loading...</div>
-
-    <div id="blazor-error-ui">
-        An unhandled error has occurred.
-        <a href="" class="reload">Reload</a>
-        <a class="dismiss">🗙</a>
-    </div>
-    <script src="_framework/blazor.webassembly.js"></script>
+    <Routes @rendermode="new InteractiveWebAssemblyRenderMode(false)" />
+    <script src="_framework/blazor.web.js"></script>
     <script src="_content/BlazorIndexedDB/dexie.min.js"></script>
     <script src="_content/BlazorIndexedDB/blazorDB.js"></script>
     <script src="js/connectivity.js"></script>
@@ -2837,36 +2894,51 @@ The complete file should look like this:
 </html>
 ```
 
-Add a *wwwroot\images* folder, and to it add the *internet-off.png* and *internet-on.png* files which we are going to use to display network connectivity status.
+In the client project, add a *wwwroot\images* folder, and to it add the *internet-off.png* and *internet-on.png* files which we are going to use to display network connectivity status.
 
-Open *Shared/MainLayout.razor* and add the new `ConnectivityIndicator` component, above the `About` line.
+These images can be found in the Completed Projects folder. 
+
+Once the images are in your project, select them and set their **Copy to Output Directory** properties to **Copy if newer**.
+
+![image-20240423115656651](images/image-20240423115656651.png)
+
+Open *MainLayout.razor* in the client project, and add the new `ConnectivityIndicator` component, above the `About` line.
 
 ```html
 @inherits LayoutComponentBase
 
 <div class="page">
+    <div class="sidebar">
+        <NavMenu />
+    </div>
+
     <main>
         <div class="top-row px-4">
-              <ConnectivityIndicator>
+            <ConnectivityIndicator>
                 <ShowOnline>
-                    <img alt="Online" 
-                        title="Application running online." 
-                        src="./images/internet-on.png" />
+                    <img alt="Online"
+                         title="Application running online."
+                         src="./images/internet-on.png" />
                 </ShowOnline>
                 <ShowOffline>
-                    <img alt="Offline" 
-                        title="Application running offline." 
-                        src="./images/internet-off.png" />
+                    <img alt="Offline"
+                         title="Application running offline."
+                         src="./images/internet-off.png" />
                 </ShowOffline>
             </ConnectivityIndicator>
-
-            <a href="https://docs.microsoft.com/aspnet/" target="_blank">About</a>
+            <a href="https://learn.microsoft.com/aspnet/core/" target="_blank">About</a>
         </div>
 
         <article class="content px-4">
             @Body
         </article>
     </main>
+</div>
+
+<div id="blazor-error-ui">
+    An unhandled error has occurred.
+    <a href="" class="reload">Reload</a>
+    <a class="dismiss">🗙</a>
 </div>
 ```
 
@@ -2880,111 +2952,7 @@ Running offline:
 
 ![image-20220609212350230](images/image-20220609212350230.png)
 
-> :tip: Use the Browser's Network/Offline mode to test the functionality.
-
-### IndexedDBSyncRepository
-
-Now we are going to add the ability to use the `CustomerRepository` repository when working online, and automatically fallback to `IndexedDBSyncRepository` when working offline, by leveraging the *connectivity.js* file we added above.
-
-In order to keep the original `CustomerIndexedDBRepository` intact, let's create a duplicate of *IndexedDBRepository.cs* and name it *IndexedDBSyncRepository.cs*, and rename the class to `IndexedDBSyncRepository`. Also make a copy as well of *CustomerIndexedDBRepository.cs* as *CustomerIndexedDBSyncRepository.cs*, and make the latter implement the new `IndexedDBSyncRepository`.
-
-```c#
-using Microsoft.JSInterop;
-
-public class CustomerIndexedDBSyncRepository : IndexedDBSyncRepository<Customer>
-{
-    public CustomerIndexedDBSyncRepository(IBlazorDbFactory dbFactory, 
-        CustomerRepository customerRepository, IJSRuntime jsRuntime)
-        : base("RepositoryDemo", "Id", true, dbFactory, customerRepository, jsRuntime)
-    {
-    }
-}
-```
-
-![image-20220609212047709](images/image-20220609212047709.png)
-
-We are going to need to track whether there is connectivity or not, so we are going to leverage our *connectivity.js* code, so we are going to need `IJSRuntime`. Let's inject it.
-
-Open *IndexedDBSyncRepository.cs* and add a using statement `using Microsoft.JSInterop`, add `private readonly IJSRuntime _jsRuntime` as a private variable, and `, IJSRuntime jsRuntime` to the constructor and assign the injected `jsRuntime` to the `_jsRuntime` variable with `_jsRuntime = jsRuntime;`.
-
-We are going to use `APIRepository` when online, so let's inject that as well, in a similar way adding `private readonly APIRepository<TEntity> _apiRepository;` in the variables section, `, APIRepository<TEntity> apiRepository,` in the constructor, and assign the value with `_apiRepository = apiRepository;`.
-
-We're also going to ad an event to let our user know about online status changes. That will let them reload data from the appropriate source.
-
-The modified code should look like this:
-
-```c#
-using Microsoft.JSInterop;
-using RepositoryDemo.Client;
-using System.Reflection;
-
-public class IndexedDBSyncRepository<TEntity> : IRepository<TEntity>
-    where TEntity : class
-{
-    // injected
-    IBlazorDbFactory _dbFactory;
-    private readonly APIRepository<TEntity> _apiRepository;
-    private readonly IJSRuntime _jsRuntime;
-    string _dbName = "";
-    string _primaryKeyName = "";
-    bool _autoGenerateKey;
-
-    IndexedDbManager manager;
-    string storeName = "";
-    string keyStoreName = "";
-    Type entityType;
-    PropertyInfo primaryKey;
-    public bool IsOnline { get; set; } = true;
-        
-    public delegate void OnlineStatusEventHandler(object sender, 
-        OnlineStatusEventArgs e);
-    public event OnlineStatusEventHandler OnlineStatusChanged;
-
-    public IndexedDBSyncRepository(string dbName, string primaryKeyName, 
-        bool autoGenerateKey, IBlazorDbFactory dbFactory, 
-        APIRepository<TEntity> apiRepository, IJSRuntime jsRuntime)
-    {
-        _dbName = dbName;
-        _dbFactory = dbFactory;
-        _apiRepository = apiRepository;
-        _jsRuntime = jsRuntime;
-        _primaryKeyName = primaryKeyName;
-        _autoGenerateKey = autoGenerateKey;
-
-        entityType = typeof(TEntity);
-        storeName = entityType.Name;
-        keyStoreName = $"{storeName}{Globals.KeysSuffix}";
-        primaryKey = entityType.GetProperty(primaryKeyName);
-    }
-```
-
-In a similar way we added the `OnConnectivityChanged` and `DisposeAsync` methods in our `ConnectivityIndicator` component, we are going to add those to the file.
-
-Add the following code above the constructor:
-
-```c#
-    [JSInvokable("ConnectivityChanged")]
-    public async void OnConnectivityChanged(bool isOnline)
-    {
-        if (IsOnline != isOnline)
-        {
-            IsOnline = isOnline;
-        }
-    }
-```
-
-And add the following line to initialize the connectivity code, at the end of the constructor:
-
-```c#
-_jsRuntime.InvokeVoidAsync("connectivity.initialize", 
-    DotNetObjectReference.Create(this));
-```
-
-Now, we are going to make several changes to the repository, to accomplish the following tasks:
-
-- Use IsOnline to determine whether to call the methods in the `APIRepository` (Online) or the IndexedDB methods (Offline) to record transactions on the server, or locally.
-- When working offline, we are going to record the transaction details for each CRUD operation, in a `*_transaction` table named after the original table.
-- We are going to keep a map of records added to IndexedDB and those online, so when we update or delete, we can pass the right primary key
+> ***TIP:*** Use the Browser's Network/Offline mode to test the functionality. Make sure the cache is enabled.
 
 We need to add a couple more classes in the *Services* folder.
 
@@ -2993,9 +2961,11 @@ This will support our mapping between local and online primary keys:
 *OnlineOfflineKey.cs*:
 
 ```c#
+namespace RepositoryDemo.Client.Services;
+
 public class OnlineOfflineKey
 {
-	public int Id { get; set; }
+    public int Id { get; set; }
     public object OnlineId { get; set; }
     public object LocalId { get; set; }
 }
@@ -3006,44 +2976,45 @@ This class will support the `OnlineStatusChanged` event:
 *OnlineStatusEventArgs.cs*:
 
 ```c#
+namespace RepositoryDemo.Client.Services;
+
 public class OnlineStatusEventArgs : EventArgs
 {
     public bool IsOnline { get; set; }
 }
 ```
 
-When recording the transaction details for each CRUD operation, we are going to need constants for the suffix of the table name, and also the suffix for the key mapping table name so let's add a *Globals.cs* file.
+When recording the transaction details for each CRUD operation, we are going to need constants for the suffix of the table name, and also the suffix for the key mapping table name so let's add a *Globals.cs* file at the project level.
 
 ```c#
-namespace RepositoryDemo.Client
+namespace RepositoryDemo.Client;
+
+public static class Globals
 {
-    public static class Globals
-    {
-        public const string LocalTransactionsSuffix = "_transactions";
-        public const string KeysSuffix = "_keys";
-    }
+    public const string LocalTransactionsSuffix = "_transactions";
+    public const string KeysSuffix = "_keys";
 }
 ```
 
-We are going to need a transaction type, to store the operation performed, so add a *LocalTransactionTypes.cs* to hold the following enum.
+We are going to need a transaction type, to store the operation performed, so add a *LocalTransactionTypes.cs* in the *Services* folder to hold the following enum.
 
 ```c#
-namespace RepositoryDemo.Client
+namespace RepositoryDemo.Client.Services;
+
+public enum LocalTransactionTypes
 {
-    public enum LocalTransactionTypes
-    {
-        Insert = 0,
-        Update = 1,
-        Delete = 2,
-        DeleteAll = 3
-    }
+    Insert = 0,
+    Update = 1,
+    Delete = 2,
+    DeleteAll = 3
 }
 ```
 
 We are also going to need a data object, to hold the information we are going to record. Add a *LocalTransaction.cs*  file with the following code:
 
 ```c#
-using RepositoryDemo.Client;
+namespace RepositoryDemo.Client.Services;
+
 public class LocalTransaction<TEntity>
 {
     public TEntity Entity { get; set; }
@@ -3053,9 +3024,23 @@ public class LocalTransaction<TEntity>
 }
 ```
 
-Now we add the rest of the code, to accomplish the tasks above.
+### IndexedDBSyncRepository
 
-The complete code should look like this:
+Now we are going to add the ability to use the `CustomerRepository` repository when working online, and automatically fallback to `IndexedDBSyncRepository` when working offline, by leveraging the *connectivity.js* file we added above.
+
+We made several changes to the repository, to accomplish the following tasks:
+
+- Use IsOnline to determine whether to call the methods in the `APIRepository` (Online) or the IndexedDB methods (Offline) to record transactions on the server, or locally.
+- When working offline, we are going to record the transaction details for each CRUD operation, in a `*_transaction` table named after the original table.
+- We are going to keep a map of records added to IndexedDB and those online, so when we update or delete, we can pass the right primary key
+
+We need to track whether there is connectivity or not, so we are going to leverage our *connectivity.js* code, so we are injecting `IJSRuntime`. 
+
+The code is using `APIRepository` when online, so we have injected that as well.
+
+We also added an `OnlineStatusChanged` event to let our user know about online status changes. That will let them reload data from the appropriate source.
+
+Add the "Sync" versions of the repository base and customer repository to the *Services* folder:
 
 *IndexedDBSyncRepository.cs*:
 
@@ -3063,6 +3048,8 @@ The complete code should look like this:
 using Microsoft.JSInterop;
 using RepositoryDemo.Client;
 using System.Reflection;
+
+namespace RepositoryDemo.Client.Services;
 
 public class IndexedDBSyncRepository<TEntity> : IRepository<TEntity>
     where TEntity : class
@@ -3127,7 +3114,7 @@ public class IndexedDBSyncRepository<TEntity> : IRepository<TEntity>
             OnlineStatusChanged?.Invoke(this,
                 new OnlineStatusEventArgs { IsOnline = true });
         }
-        
+
     }
 
     private async Task EnsureManager()
@@ -3750,24 +3737,50 @@ public class IndexedDBSyncRepository<TEntity> : IRepository<TEntity>
 }
 ```
 
+*CustomerIndexedDBSyncRepository.cs*:
+
+```c#
+using Microsoft.JSInterop;
+namespace RepositoryDemo.Client.Services;
+
+public class CustomerIndexedDBSyncRepository : IndexedDBSyncRepository<Customer>
+{
+    public CustomerIndexedDBSyncRepository(IBlazorDbFactory dbFactory,
+        CustomerRepository customerRepository, IJSRuntime jsRuntime)
+        : base("RepositoryDemo", "Id", true, dbFactory, customerRepository, jsRuntime)
+    {
+    }
+}
+```
+
 Open *Program.cs* and add two new `StoreSchema` objects under the `options.StoreSchemas` BlazorDB options.
 
 ```c#
-,
-        new StoreSchema()
-        {
-            Name = $"Customer{Globals.LocalTransactionsSuffix}",
-            PrimaryKey = "Id",
-            PrimaryKeyAuto = true,
-            Indexes = new List<string> { "Id" }
-        },
-        new StoreSchema()
-        {
-            Name = $"Customer{Globals.KeysSuffix}",
-            PrimaryKey = "Id",
-            PrimaryKeyAuto = true,
-            Indexes = new List<string> { "Id" }
-        }
+// List all your entities here, but as StoreSchema objects
+options.StoreSchemas = new List<StoreSchema>()
+{
+    new StoreSchema()
+    {
+        Name = "Customer",      // Name of entity
+        PrimaryKey = "Id",      // Primary Key of entity
+        PrimaryKeyAuto = true,  // Whether or not the Primary key is generated
+        Indexes = new List<string> { "Id" }
+    },
+    new StoreSchema()
+    {
+        Name = $"Customer{Globals.LocalTransactionsSuffix}",
+        PrimaryKey = "Id",
+        PrimaryKeyAuto = true,
+        Indexes = new List<string> { "Id" }
+    },
+    new StoreSchema()
+    {
+        Name = $"Customer{Globals.KeysSuffix}",
+        PrimaryKey = "Id",
+        PrimaryKeyAuto = true,
+        Indexes = new List<string> { "Id" }
+    }
+};
 ```
 
 Next, register `CustomerIndexedDBSyncRepository` below the `CustomerIndexedDBRepository` registration with `builder.Services.AddScoped<CustomerIndexedDBSyncRepository>();`.
@@ -3775,22 +3788,24 @@ Next, register `CustomerIndexedDBSyncRepository` below the `CustomerIndexedDBRep
 The complete code should look like this:
 
 ```c#
+global using BlazorDB;
 global using System.Net.Http.Json;
 global using Newtonsoft.Json;
 global using System.Net;
 global using System.Linq.Expressions;
 global using AvnRepository;
-global using BlazorDB;
-using Microsoft.AspNetCore.Components.Web;
+global using RepositoryDemo.Client.Models;
 using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
+using RepositoryDemo.Client.Services;
 using RepositoryDemo.Client;
 
 var builder = WebAssemblyHostBuilder.CreateDefault(args);
-builder.RootComponents.Add<App>("#app");
-builder.RootComponents.Add<HeadOutlet>("head::after");
 
-builder.Services.AddScoped(sp => new HttpClient { BaseAddress = new Uri(builder.HostEnvironment.BaseAddress) });
+builder.Services.AddScoped(sp => new HttpClient
+{ BaseAddress = new Uri(builder.HostEnvironment.BaseAddress) });
+
 builder.Services.AddScoped<CustomerRepository>();
+
 builder.Services.AddBlazorDB(options =>
 {
     options.Name = "RepositoryDemo";
@@ -3822,8 +3837,10 @@ builder.Services.AddBlazorDB(options =>
         }
     };
 });
+
 builder.Services.AddScoped<CustomerIndexedDBRepository>();
 builder.Services.AddScoped<CustomerIndexedDBSyncRepository>();
+
 await builder.Build().RunAsync();
 ```
 
@@ -3831,11 +3848,11 @@ await builder.Build().RunAsync();
 
 > As you work with IndexedDB via BlazorDB, you may find a situation where after changing the schema of the database in *Program.cs*, the changes are not reflected in the browser tools Application tab. If that's the case, just bump up the hosting ports in the Server project's *Properties/launchSettings.json* file. 
 >
-> ![image-20220610091423952](images/image-20220610091423952.png)
+> ![image-20240423114717798](images/image-20240423114717798.png)
 >
 > Adding one to each of these ports, effectively changes the url, which means your IndexedDB database will be created anew.
 
-To support offline syncing, our *Index.razor* page needs to handle the `OnlineStatusChanged` event, which will render it incompatible with the other repositories. Rather than do that, we're going to create a new page for the sync demo.
+To support offline syncing, our *Home.razor* page needs to handle the `OnlineStatusChanged` event, which will render it incompatible with the other repositories. Rather than do that, we're going to create a new page for the sync demo.
 
 Create a new page in the *Pages* folder called *Syncdemo.razor*:
 
@@ -4113,9 +4130,9 @@ Create a new page in the *Pages* folder called *Syncdemo.razor*:
 }
 ```
 
-Update Index.razor with a button to navigate to the `Syncdemo` page:
+Update *Home.razor* with a button to navigate to the `Syncdemo` page:
 
-*Index.razor*:
+*Home.razor*:
 
 ```c#
 @page "/"
@@ -4355,11 +4372,11 @@ Try this test, run the application offline, and perform the following actions:
 
 Notice the IndexedDB shows just two customers:
 
-![IndexedDB](images/bc77f27ede50f12be11338c856c9c8a943ae85f500afba17df9d18dd13fa74e8.png)
+![image-20240423120105891](images/image-20240423120105891.png)
 
 Also noticed that there is a new `Customers_transactions` table with all the transaction data we recorded.
 
-![image-20220609211634755](images/image-20220609211634755.png)
+![image-20240423120221785](images/image-20240423120221785.png)
 
 Now, enable back Network connectivity, and the database will sync.
 
@@ -4369,17 +4386,17 @@ If you refresh the IndexedDB, you will notice it will still show two customers, 
 
 
 
-The solution up to this point can be found in the *BlazorRepositoryDemo-BeforeSignalRSync* folder.
+The finished code for this leg of the demo can be found in the *5-Added IndexedDB Sync Repository* folder
 
 ## Using SignalR to sync database actions when online
 
 If we're going to keep our local database in sync, we might as well go all the way toward syncing in real time when other users modify data. This approach can save time and minimize going back to the database to refresh entire tables. 
 
-Taking a nod from BlazorTrain episode #30 (Synchronizing Data with SignalR), we're going to automatically sync CRUD actions from other users while online, and whenever we come back online from being offline.
+Taking a nod from [BlazorTrain](https://blazortrain.com) episode #30 (Synchronizing Data with SignalR), we're going to automatically sync CRUD actions from other users while online, and whenever we come back online from being offline.
 
 In this demo we will use SignalR, but in production, I would use a more robust message broker like RabbitMQ.
 
-We will start on in the Server app. Add the following to *Program.cs*:
+We will start on in the Server project. Add the following to *Program.cs*:
 
 First, a global using statement at the top:
 
@@ -4387,7 +4404,7 @@ First, a global using statement at the top:
 global using Microsoft.AspNetCore.SignalR;
 ```
 
-Add services after the line `builder.Services.AddRazorPages()`:
+Add services just before the line `var app = builder.Build();`:
 
 ```c#
 builder.Services.AddSignalR();
@@ -4398,7 +4415,7 @@ builder.Services.AddResponseCompression(opts =>
 });
 ```
 
-add this after the line `app.UseRouting()`:
+add this after the line `app.UseAntiforgery();`:
 
 ```c#
 app.UseResponseCompression();
@@ -4413,39 +4430,48 @@ app.MapHub<DataSyncHub>("/DataSyncHub");
 The complete *Program.cs* should look like this:
 
 ```c#
-global using System.Linq.Expressions;
+global using Microsoft.AspNetCore.SignalR;
 global using System.Reflection;
+global using AvnRepository;
 global using Microsoft.EntityFrameworkCore;
+global using RepositoryDemo.Client.Models;
 global using System.Data.SqlClient;
 global using Dapper;
 global using Dapper.Contrib.Extensions;
 global using System.Data;
-global using AvnRepository;
-global using Microsoft.AspNetCore.SignalR;
+using RepositoryDemo.Components;
+using RepositoryDemo.Data;
 using Microsoft.AspNetCore.ResponseCompression;
-using RepositoryDemo.Server.Data;
+using RepositoryDemo;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
+builder.Services.AddRazorComponents()
+    .AddInteractiveWebAssemblyComponents();
 
-builder.Services.AddControllersWithViews();
-builder.Services.AddRazorPages();
+builder.Services.AddSingleton<MemoryRepository<Customer>>(x =>
+    new MemoryRepository<Customer>("Id"));
+
+builder.Services.AddTransient<RepositoryDemoContext, RepositoryDemoContext>();
+builder.Services.AddTransient<EFRepository<Customer, RepositoryDemoContext>>();
+
+builder.Services.AddTransient<DapperRepository<Customer>>(s =>
+    new DapperRepository<Customer>(
+        builder.Configuration.GetConnectionString("RepositoryDemoConnectionString")));
+
+builder.Services.AddControllers();
+
 builder.Services.AddSignalR();
 builder.Services.AddResponseCompression(opts =>
 {
     opts.MimeTypes = ResponseCompressionDefaults.MimeTypes.Concat(
         new[] { "application/octet-stream" });
 });
-builder.Services.AddSingleton<MemoryRepository<Customer>>(x =>
-  new MemoryRepository<Customer>("Id"));
-builder.Services.AddTransient<RepositoryDemoContext, RepositoryDemoContext>();
-builder.Services.AddTransient<EFRepository<Customer, RepositoryDemoContext>>();
-builder.Services.AddTransient<DapperRepository<Customer>>(s =>
-    new DapperRepository<Customer>(
-        builder.Configuration.GetConnectionString("RepositoryDemoConnectionString")));
 
 var app = builder.Build();
+
+app.MapControllers();
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
@@ -4454,22 +4480,21 @@ if (app.Environment.IsDevelopment())
 }
 else
 {
-    app.UseExceptionHandler("/Error");
+    app.UseExceptionHandler("/Error", createScopeForErrors: true);
     // The default HSTS value is 30 days. You may want to change this for production scenarios, see https://aka.ms/aspnetcore-hsts.
     app.UseHsts();
 }
 
 app.UseHttpsRedirection();
 
-app.UseBlazorFrameworkFiles();
 app.UseStaticFiles();
-
-app.UseRouting();
+app.UseAntiforgery();
 app.UseResponseCompression();
 
-app.MapRazorPages();
-app.MapControllers();
-app.MapFallbackToFile("index.html");
+app.MapRazorComponents<App>()
+    .AddInteractiveWebAssemblyRenderMode()
+    .AddAdditionalAssemblies(typeof(RepositoryDemo.Client._Imports).Assembly);
+
 app.MapHub<DataSyncHub>("/DataSyncHub");
 
 app.Run();
@@ -4478,7 +4503,9 @@ app.Run();
 Next, add *DataSyncHub.cs* to the Server Project:
 
 ```c#
-public class DataSyncHub :Hub
+namespace RepositoryDemo;
+
+public class DataSyncHub : Hub
 {
     public async Task SyncRecord(string Table, string Action, string Id)
     {
@@ -4490,10 +4517,10 @@ public class DataSyncHub :Hub
 
 This hub will be used to send messages to other clients after we've inserted, updated, or deleted a record.
 
-Now, on the client side we need to add the `Microsoft.AspNetCore.SignalR.Client` NuGet package. You can add the following to your *RepositoryDemo.Client.csproj* file:
+Now, on the client side we need to add the latest version of the `Microsoft.AspNetCore.SignalR.Client` NuGet package. You can add the following to your *RepositoryDemo.Client.csproj* file:
 
 ```xml
-<PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="6.0.5" />
+<PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="8.0.4" />
 ```
 
 In the Client's *Program.cs* we need the following:
@@ -4507,25 +4534,25 @@ global using Microsoft.AspNetCore.SignalR.Client;
 The entire *Program.cs* should look like this:
 
 ```c#
+global using Microsoft.AspNetCore.SignalR.Client;
+global using BlazorDB;
 global using System.Net.Http.Json;
 global using Newtonsoft.Json;
 global using System.Net;
+global using System.Linq.Expressions;
 global using AvnRepository;
-global using BlazorDB;
-global using Microsoft.JSInterop;
-global using Microsoft.AspNetCore.SignalR.Client;
-global using Dapper.Contrib.Extensions;
-
-using Microsoft.AspNetCore.Components.Web;
+global using RepositoryDemo.Client.Models;
 using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
+using RepositoryDemo.Client.Services;
 using RepositoryDemo.Client;
 
 var builder = WebAssemblyHostBuilder.CreateDefault(args);
-builder.RootComponents.Add<App>("#app");
-builder.RootComponents.Add<HeadOutlet>("head::after");
 
-builder.Services.AddScoped(sp => new HttpClient { BaseAddress = new Uri(builder.HostEnvironment.BaseAddress) });
+builder.Services.AddScoped(sp => new HttpClient
+{ BaseAddress = new Uri(builder.HostEnvironment.BaseAddress) });
+
 builder.Services.AddScoped<CustomerRepository>();
+
 builder.Services.AddBlazorDB(options =>
 {
     options.Name = "RepositoryDemo";
@@ -4557,8 +4584,10 @@ builder.Services.AddBlazorDB(options =>
         }
     };
 });
+
 builder.Services.AddScoped<CustomerIndexedDBRepository>();
 builder.Services.AddScoped<CustomerIndexedDBSyncRepository>();
+
 await builder.Build().RunAsync();
 ```
 
@@ -4567,6 +4596,8 @@ We're also going to dispose an event in the *IndesedDBSyncRepository.cs* file th
 To the *Services* folder, add *DataChangedEventArgs.cs* :
 
 ```c#
+namespace RepositoryDemo.Client.Services;
+
 public class DataChangedEventArgs : EventArgs
 {
     public string Table { get; set; }
@@ -4588,6 +4619,7 @@ We've made a few changes to *IndexedDBSyncRepository.cs* Here's the completed ne
 using Microsoft.JSInterop;
 using RepositoryDemo.Client;
 using System.Reflection;
+namespace RepositoryDemo.Client.Services;
 
 public class IndexedDBSyncRepository<TEntity> : IRepository<TEntity>
     where TEntity : class
@@ -4655,52 +4687,59 @@ public class IndexedDBSyncRepository<TEntity> : IRepository<TEntity>
         {
             // SignalR may not be the BEST way to send and receive messages.
             // If this were a production system, I would use a cloud-based queue or messaging system,
-            // but SignalR makes for a good simple demonstration of how to keep client side data in sync.
+            // but SignalR makes for a good simple demonstration of how to keep client-side data in sync.
 
             await EnsureManager();
 
-            // only interested in our table
-            if (Table == storeName)
+            try
             {
-                if (Action == "insert")
+                // only interested in our table
+                if (Table == storeName)
                 {
-                    // an item was inserted
-                    // fetch it
-                    var item = await _apiRepository.GetByIdAsync(Id);
-                    if (item != null)
+                    if (Action == "insert")
                     {
-                        // add to the local database
-                        var localItem = await InsertOfflineAsync(item);
+                        // an item was inserted
+                        // fetch it
+                        var item = await _apiRepository.GetByIdAsync(Id);
+                        if (item != null)
+                        {
+                            // add to the local database
+                            var localItem = await InsertOfflineAsync(item);
+                        }
+                    }
+                    else if (Action == "update")
+                    {
+                        // an item was updated
+                        // update the item in the local database
+                        var item = await _apiRepository.GetByIdAsync(Id);
+                        if (item != null)
+                        {
+                            var localItem = await UpdateKeyToLocal(item);
+                            await UpdateOfflineAsync(localItem);
+                        }
+                    }
+                    else if (Action == "delete")
+                    {
+                        // an item was deleted. 
+                        // delete the item in the local database
+                        var localId = await GetLocalId(Id);
+                        await DeleteByIdOfflineAsync(localId);
+                    }
+                    else if (Action == "delete-all")
+                    {
+                        // clear local database
+                        await DeleteAllOfflineAsync();
                     }
                 }
-                else if (Action == "update")
-                {
-                    // an item was updated
-                    // update the item in the local database
-                    var item = await _apiRepository.GetByIdAsync(Id);
-                    if (item != null)
-                    {
-                        var localItem = await UpdateKeyToLocal(item);
-                        await UpdateOfflineAsync(localItem);
-                    }
-                }
-                else if (Action == "delete")
-                {
-                    // an item was deleted
-                    // delete the item in the local database
-                    var localId = await GetLocalId(Id);
-                    await DeleteByIdOfflineAsync(localId);
-                }
-                else if (Action == "delete-all")
-                {
-                    // clear local database
-                    await DeleteAllOfflineAsync();
-                }
-
-                // raise DataChanged event
-                var args = new DataChangedEventArgs(Table, Action, Id);
-                DataChanged?.Invoke(this, args);
             }
+            catch (Exception ex)
+            {
+                // ignore errors
+            }
+
+            // raise DataChanged event
+            var args = new DataChangedEventArgs(Table, Action, Id);
+            DataChanged?.Invoke(this, args);
         });
 
         if (IsOnline)
@@ -5081,6 +5120,7 @@ public class IndexedDBSyncRepository<TEntity> : IRepository<TEntity>
             var Id = primaryKey.GetValue(returnValue);
             returnValue = await UpdateKeyToLocal(returnValue);
             await UpdateOfflineAsync(returnValue);
+            await hubConnection.InvokeAsync("SyncRecord", storeName, "update", Id.ToString());
         }
         else
         {
@@ -5382,6 +5422,7 @@ Since we are now injecting an HttpClient, we need to change *CustomerIndexedDBSy
 
 ```c#
 using Microsoft.JSInterop;
+namespace RepositoryDemo.Client.Services;
 public class CustomerIndexedDBSyncRepository : IndexedDBSyncRepository<Customer>
 {
     public CustomerIndexedDBSyncRepository(IBlazorDbFactory dbFactory,
@@ -5394,7 +5435,8 @@ public class CustomerIndexedDBSyncRepository : IndexedDBSyncRepository<Customer>
             dbFactory,
             customerRepository,
             jsRuntime,
-            httpClient) {  }
+            httpClient)
+    { }
 }
 ```
 
@@ -5721,8 +5763,5 @@ Finally, change *SyncDemo.razor* to support these new features:
 }
 ```
 
-To test the new sync features, run the app in two different browsers. I use Edge and Chrome. That way, each will have it's own copy of IndexedDB. Bring up the developer tools in each, and go to the Application tab. There you will be able to see how the local data changes in response to messages from other users.
+To test the new sync features, run the app in two different browsers. I use Edge and Chrome. That way, each will have its own copy of IndexedDB. Bring up the developer tools in each, and go to the Application tab. There you will be able to see how the local data changes in response to messages from other users.
 
-
-
-### 
