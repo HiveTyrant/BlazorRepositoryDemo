@@ -14,7 +14,7 @@ window.connectivity = {
     },
     dispose: function () {
 
-        if (handler != null) {
+        if (notify != null) {
 
             window.removeEventListener("online", notify);
             window.removeEventListener("offline", notify);
